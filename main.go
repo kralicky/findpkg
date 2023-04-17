@@ -32,7 +32,7 @@ func main() {
 	patternRegex := regexp.MustCompile(pattern)
 
 	allPackages, err := packages.Load(&packages.Config{
-		Mode:       packages.NeedName | packages.NeedFiles | packages.NeedImports | packages.NeedDeps,
+		Mode:       packages.NeedName | packages.NeedFiles | packages.NeedImports | packages.NeedDeps | packages.NeedModule,
 		Tests:      tests,
 		BuildFlags: buildFlags,
 	}, topLevelPackages...)
@@ -46,7 +46,6 @@ func main() {
 		if seen[pkg] {
 			return nil
 		}
-		seen[pkg] = true
 
 		var branches [][]*packages.Package
 
@@ -63,6 +62,9 @@ func main() {
 		for _, imp := range imports {
 			branches = append(branches, visit(pkg.Imports[imp])...)
 		}
+		if len(branches) == 0 {
+			seen[pkg] = true
+		}
 		for i, branch := range branches {
 			if len(branch) > 0 {
 				branches[i] = append([]*packages.Package{pkg}, branch...)
@@ -71,16 +73,22 @@ func main() {
 
 		return branches
 	}
+	allBranches := [][]*packages.Package{}
 	for _, pkg := range allPackages {
 		branches := visit(pkg)
 		if len(branches) == 0 {
 			continue
 		}
-		tree := mergeBranches(branches)
-		tree.pkg = pkg
+		for _, branch := range branches {
+			allBranches = append(allBranches, append([]*packages.Package{{PkgPath: pkg.Module.Path}}, branch...))
+		}
+	}
+
+	roots := mergeBranches(allBranches)
+	for _, root := range roots {
 		lw := list.NewWriter()
 		lw.SetStyle(list.StyleConnectedLight)
-		buildTree(tree, lw)
+		buildTree(root, lw)
 		println(lw.Render())
 	}
 }
@@ -90,12 +98,16 @@ type treeNode struct {
 	imports []*treeNode
 }
 
-func mergeBranches(branches [][]*packages.Package) *treeNode {
-	root := &treeNode{}
+func mergeBranches(branches [][]*packages.Package) []*treeNode {
+	roots := make(map[string]*treeNode)
 
 	for _, branch := range branches {
-		currentNode := root
-		for _, pkg := range branch {
+		root := branch[0]
+		if _, ok := roots[root.PkgPath]; !ok {
+			roots[root.PkgPath] = &treeNode{pkg: root}
+		}
+		currentNode := roots[root.PkgPath]
+		for _, pkg := range branch[1:] {
 			found := false
 			for _, child := range currentNode.imports {
 				if child.pkg == pkg {
@@ -112,7 +124,14 @@ func mergeBranches(branches [][]*packages.Package) *treeNode {
 		}
 	}
 
-	return root
+	var rootNodes []*treeNode
+	for _, root := range roots {
+		rootNodes = append(rootNodes, root)
+	}
+	sort.Slice(rootNodes, func(i, j int) bool {
+		return rootNodes[i].pkg.PkgPath < rootNodes[j].pkg.PkgPath
+	})
+	return rootNodes
 }
 
 func buildTree(node *treeNode, lw list.Writer) {
