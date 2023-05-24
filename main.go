@@ -43,11 +43,17 @@ func main() {
 	var visit func(*packages.Package) (branches [][]*packages.Package)
 	seen := make(map[*packages.Package]bool)
 	visit = func(pkg *packages.Package) [][]*packages.Package {
-		if seen[pkg] {
-			return nil
-		}
 
 		var branches [][]*packages.Package
+		isSeen := seen[pkg]
+		if isSeen {
+			if patternRegex.Match([]byte(pkg.PkgPath)) {
+				return append(branches, []*packages.Package{pkg})
+			}
+			return nil
+		} else {
+			seen[pkg] = true
+		}
 
 		if patternRegex.Match([]byte(pkg.PkgPath)) {
 			return append(branches, []*packages.Package{pkg})
@@ -62,9 +68,7 @@ func main() {
 		for _, imp := range imports {
 			branches = append(branches, visit(pkg.Imports[imp])...)
 		}
-		if len(branches) == 0 {
-			seen[pkg] = true
-		}
+
 		for i, branch := range branches {
 			if len(branch) > 0 {
 				branches[i] = append([]*packages.Package{pkg}, branch...)
